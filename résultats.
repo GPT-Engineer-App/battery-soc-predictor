@@ -1,0 +1,122 @@
+% Charger les données
+dataA = load('TripA05.mat'); % Données incomplètes (été)
+dataB = load('TripB05.mat'); % Données complètes (hiver)
+
+% Combiner les données
+data = [dataA; dataB];
+
+% Prétraitement des données
+% Nettoyage des données
+data = rmmissing(data); % Supprimer les valeurs manquantes
+data = rmoutliers(data); % Supprimer les valeurs aberrantes
+
+% Normalisation des données
+data = normalize(data);
+
+% Définir les caractéristiques (features) et la cible (target)
+features = data(:, {'Voltage', 'Current', 'Temperature', 'Speed', 'Altitude', 'Accelerator', 'InteriorTemp', 'HeatingPower'});
+target = data(:, 'SoC');
+
+% Diviser les données en ensembles d'entraînement et de test
+cv = cvpartition(size(data, 1), 'HoldOut', 0.3);
+trainIdx = training(cv);
+testIdx = test(cv);
+
+X_train = features(trainIdx, :);
+y_train = target(trainIdx, :);
+X_test = features(testIdx, :);
+y_test = target(testIdx, :);
+
+% Définir les types de noyaux à tester
+kernels = {'linear', 'polynomial', 'rbf'};
+
+% Initialiser les variables pour stocker les résultats
+results = struct();
+
+% Entraîner et évaluer les modèles SVM avec différents noyaux
+for i = 1:length(kernels)
+    kernel = kernels{i};
+    
+    % Définir les options du modèle SVM
+    if strcmp(kernel, 'linear')
+        t = templateSVM('KernelFunction', 'linear');
+    elseif strcmp(kernel, 'polynomial')
+        t = templateSVM('KernelFunction', 'polynomial', 'PolynomialOrder', 3);
+    elseif strcmp(kernel, 'rbf')
+        t = templateSVM('KernelFunction', 'rbf');
+    end
+    
+    % Entraîner le modèle SVM
+    model = fitrsvm(X_train, y_train, 'KernelFunction', kernel, 'Standardize', true, 'OptimizeHyperparameters', 'auto', 'HyperparameterOptimizationOptions', struct('AcquisitionFunctionName', 'expected-improvement-plus'));
+    
+    % Prédire les valeurs de SoC sur l'ensemble de test
+    y_pred = predict(model, X_test);
+    
+    % Calculer les métriques de performance
+    R = corr(y_test, y_pred);
+    MAE = mean(abs(y_test - y_pred));
+    RMSE = sqrt(mean((y_test - y_pred).^2));
+    
+    % Stocker les résultats
+    results.(kernel).model = model;
+    results.(kernel).R = R;
+    results.(kernel).MAE = MAE;
+    results.(kernel).RMSE = RMSE;
+    results.(kernel).y_pred = y_pred;
+end
+
+% Afficher les résultats
+disp('Résultats des différents noyaux :');
+disp(results);
+
+% Comparer les performances des différents noyaux
+metrics = {'R', 'MAE', 'RMSE'};
+for i = 1:length(metrics)
+    metric = metrics{i};
+    fprintf('\n%s:\n', metric);
+    for j = 1:length(kernels)
+        kernel = kernels{j};
+        fprintf('%s: %.4f\n', kernel, results.(kernel).(metric));
+    end
+end
+
+% Identifier le noyau offrant les meilleures performances
+bestKernel = '';
+bestRMSE = inf;
+for i = 1:length(kernels)
+    kernel = kernels{i};
+    if results.(kernel).RMSE < bestRMSE
+        bestRMSE = results.(kernel).RMSE;
+        bestKernel = kernel;
+    end
+end
+
+fprintf('\nLe noyau offrant les meilleures performances est : %s\n', bestKernel);
+
+% Présenter les résultats sous forme de graphiques
+figure;
+for i = 1:length(kernels)
+    kernel = kernels{i};
+    subplot(3, 1, i);
+    plot(y_test, 'b');
+    hold on;
+    plot(results.(kernel).y_pred, 'r');
+    title(sprintf('Noyau %s', kernel));
+    legend('Valeurs réelles', 'Valeurs prédites');
+    xlabel('Échantillons');
+    ylabel('SoC');
+end
+
+% Afficher les avantages et les inconvénients de chaque noyau
+fprintf('\nAnalyse des avantages et des inconvénients de chaque noyau :\n');
+fprintf('Noyau linéaire :\n');
+fprintf('Avantages : Simple et rapide à entraîner.\n');
+fprintf('Inconvénients : Peut ne pas capturer les relations non linéaires complexes.\n');
+
+fprintf('Noyau polynomial :\n');
+fprintf('Avantages : Peut capturer des relations non linéaires plus complexes.\n');
+fprintf('Inconvénients : Peut être sensible aux valeurs aberrantes et aux données bruitées.\n');
+
+fprintf('Noyau gaussien (RBF) :\n');
+fprintf('Avantages : Très flexible et peut capturer des relations non linéaires complexes.\n');
+fprintf('Inconvénients : Peut être plus lent à entraîner et nécessite une optimisation des hyper-paramètres.\n');
